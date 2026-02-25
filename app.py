@@ -32,7 +32,6 @@ from converter import (
 
 # ── Export helpers ────────────────────────────────────────────────────────────
 
-
 def _make_gdf(df: pd.DataFrame, lat_col: str, lon_col: str) -> gpd.GeoDataFrame:
     """Create a GeoDataFrame from a DataFrame with lat/lon columns."""
     geometry = [Point(lon, lat) for lat, lon in zip(df[lat_col], df[lon_col])]
@@ -44,21 +43,21 @@ def _to_kml(gdf: gpd.GeoDataFrame, name_prefix: str = "Point") -> str:
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<kml xmlns="http://www.opengis.net/kml/2.2">',
-        "<Document>",
-        f"  <name>KangahGPS Export</name>",
+        '<Document>',
+        f'  <name>KangahGPS Export</name>',
     ]
     for i, row in gdf.iterrows():
         pt = row.geometry
-        lines.append("  <Placemark>")
-        lines.append(f"    <name>{name_prefix} {i+1}</name>")
-        lines.append(f"    <description>Lat: {pt.y:.8f}, Lon: {pt.x:.8f}</description>")
-        lines.append("    <Point>")
-        lines.append(f"      <coordinates>{pt.x},{pt.y},0</coordinates>")
-        lines.append("    </Point>")
-        lines.append("  </Placemark>")
-    lines.append("</Document>")
-    lines.append("</kml>")
-    return "\n".join(lines)
+        lines.append('  <Placemark>')
+        lines.append(f'    <name>{name_prefix} {i+1}</name>')
+        lines.append(f'    <description>Lat: {pt.y:.8f}, Lon: {pt.x:.8f}</description>')
+        lines.append('    <Point>')
+        lines.append(f'      <coordinates>{pt.x},{pt.y},0</coordinates>')
+        lines.append('    </Point>')
+        lines.append('  </Placemark>')
+    lines.append('</Document>')
+    lines.append('</kml>')
+    return '\n'.join(lines)
 
 
 def _to_shapefile_zip(gdf: gpd.GeoDataFrame) -> bytes:
@@ -69,17 +68,13 @@ def _to_shapefile_zip(gdf: gpd.GeoDataFrame) -> bytes:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             import os
-
             for fname in os.listdir(tmpdir):
                 zf.write(f"{tmpdir}/{fname}", fname)
         return buf.getvalue()
 
 
 def show_export_buttons(
-    df: pd.DataFrame,
-    lat_col: str,
-    lon_col: str,
-    key_prefix: str,
+    df: pd.DataFrame, lat_col: str, lon_col: str, key_prefix: str,
 ):
     """Show CSV, KML, and Shapefile download buttons."""
     st.markdown("##### 📥 Export")
@@ -116,7 +111,6 @@ def show_export_buttons(
             use_container_width=True,
             key=f"{key_prefix}_shp",
         )
-
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -187,19 +181,13 @@ with tab_single:
                 "UTM Zone", min_value=1, max_value=60, value=30, step=1, key="src_zone"
             )
 
-        val1 = st.number_input(
-            f1, format="%.8f" if src_info["is_latlon"] else "%.3f", key="v1"
-        )
-        val2 = st.number_input(
-            f2, format="%.8f" if src_info["is_latlon"] else "%.3f", key="v2"
-        )
+        val1 = st.number_input(f1, format="%.8f" if src_info["is_latlon"] else "%.3f", key="v1")
+        val2 = st.number_input(f2, format="%.8f" if src_info["is_latlon"] else "%.3f", key="v2")
 
     with col_tgt:
         st.subheader("Target")
         default_tgt = 1 if src_name == CRS_NAMES[0] else 0
-        tgt_name = st.selectbox(
-            "Target CRS", CRS_NAMES, index=default_tgt, key="tgt_crs"
-        )
+        tgt_name = st.selectbox("Target CRS", CRS_NAMES, index=default_tgt, key="tgt_crs")
         tgt_info = CRS_OPTIONS[tgt_name]
 
         # UTM zone selector when target is UTM
@@ -208,12 +196,7 @@ with tab_single:
             auto_zone = st.checkbox("Auto-detect UTM zone", value=True, key="auto_zone")
             if not auto_zone:
                 tgt_utm_zone = st.number_input(
-                    "UTM Zone",
-                    min_value=1,
-                    max_value=60,
-                    value=30,
-                    step=1,
-                    key="tgt_zone",
+                    "UTM Zone", min_value=1, max_value=60, value=30, step=1, key="tgt_zone"
                 )
 
     st.markdown("")
@@ -239,13 +222,8 @@ with tab_single:
                             auto_lon = val2
                         else:
                             tmp_lat, tmp_lon = convert_single(
-                                src_epsg,
-                                "EPSG:4326",
-                                val1,
-                                val2,
-                                src_info["is_latlon"],
-                                True,
-                                tfm_name,
+                                src_epsg, "EPSG:4326", val1, val2,
+                                src_info["is_latlon"], True, tfm_name,
                             )
                             auto_lon = tmp_lon
                         detected_zone = utm_zone_from_lon(auto_lon)
@@ -254,28 +232,18 @@ with tab_single:
                     tgt_epsg = get_epsg(tgt_name)
 
                 out1, out2 = convert_single(
-                    src_epsg,
-                    tgt_epsg,
-                    val1,
-                    val2,
-                    src_info["is_latlon"],
-                    tgt_info["is_latlon"],
-                    tfm_name,
+                    src_epsg, tgt_epsg, val1, val2,
+                    src_info["is_latlon"], tgt_info["is_latlon"], tfm_name,
                 )
 
                 # Store results in session state so they persist
                 st.session_state.single_result = {
-                    "out1": out1,
-                    "out2": out2,
-                    "tf1": tgt_info["fields"][0],
-                    "tf2": tgt_info["fields"][1],
+                    "out1": out1, "out2": out2,
+                    "tf1": tgt_info["fields"][0], "tf2": tgt_info["fields"][1],
                     "is_latlon": tgt_info["is_latlon"],
                     "src_is_latlon": src_info["is_latlon"],
-                    "src_val1": val1,
-                    "src_val2": val2,
-                    "zone": (
-                        (tgt_utm_zone or detected_zone) if tgt_info["is_utm"] else None
-                    ),
+                    "src_val1": val1, "src_val2": val2,
+                    "zone": (tgt_utm_zone or detected_zone) if tgt_info["is_utm"] else None,
                 }
 
             except Exception as e:
@@ -300,8 +268,7 @@ with tab_single:
         if r["is_latlon"]:
             st.markdown("##### 🗺️ Map Preview")
             preview = folium.Map(
-                location=[out1, out2],
-                zoom_start=10,
+                location=[out1, out2], zoom_start=10,
                 tiles="CartoDB positron",
             )
             folium.Marker(
@@ -313,8 +280,7 @@ with tab_single:
         elif r["src_is_latlon"]:
             st.markdown("##### 🗺️ Map Preview (source location)")
             preview = folium.Map(
-                location=[r["src_val1"], r["src_val2"]],
-                zoom_start=10,
+                location=[r["src_val1"], r["src_val2"]], zoom_start=10,
                 tiles="CartoDB positron",
             )
             folium.Marker(
@@ -325,12 +291,9 @@ with tab_single:
             st_folium(preview, width=700, height=400, key="single_map_src")
 
         # Export single point
-        single_df = pd.DataFrame(
-            {
-                r["tf1"]: [out1],
-                r["tf2"]: [out2],
-            }
-        )
+        single_df = pd.DataFrame({
+            r["tf1"]: [out1], r["tf2"]: [out2],
+        })
         if r["is_latlon"]:
             show_export_buttons(single_df, r["tf1"], r["tf2"], "single")
 
@@ -353,7 +316,9 @@ with tab_batch:
         bsrc_info = CRS_OPTIONS[bsrc_name]
         bsrc_zone = None
         if bsrc_info["is_utm"]:
-            bsrc_zone = st.number_input("Source UTM Zone", 1, 60, 30, key="bsrc_zone")
+            bsrc_zone = st.number_input(
+                "Source UTM Zone", 1, 60, 30, key="bsrc_zone"
+            )
     with bcol2:
         btgt_name = st.selectbox("Target CRS", CRS_NAMES, index=1, key="btgt")
         btgt_info = CRS_OPTIONS[btgt_name]
@@ -399,11 +364,7 @@ with tab_batch:
                         key="x_col",
                     )
                 with mc3:
-                    default_y = (
-                        col_names.index(x_col) + 1
-                        if col_names.index(x_col) + 1 < len(col_names)
-                        else 0
-                    )
+                    default_y = col_names.index(x_col) + 1 if col_names.index(x_col) + 1 < len(col_names) else 0
                     remaining = [c for c in col_names if c != x_col]
                     y_col = st.selectbox(
                         f"{bf2} column",
@@ -412,9 +373,7 @@ with tab_batch:
                         key="y_col",
                     )
 
-                if st.button(
-                    "🔄  Convert All", use_container_width=True, key="batch_btn"
-                ):
+                if st.button("🔄  Convert All", use_container_width=True, key="batch_btn"):
                     coords = list(zip(df[x_col], df[y_col]))
 
                     # Resolve EPSGs
@@ -429,29 +388,18 @@ with tab_batch:
                             auto_lon = first_v2
                         else:
                             _, auto_lon = convert_single(
-                                bsrc_epsg,
-                                "EPSG:4326",
-                                first_v1,
-                                first_v2,
-                                bsrc_info["is_latlon"],
-                                True,
-                                tfm_name,
+                                bsrc_epsg, "EPSG:4326", first_v1, first_v2,
+                                bsrc_info["is_latlon"], True, tfm_name,
                             )
-                        btgt_epsg = get_epsg(
-                            btgt_name, zone=utm_zone_from_lon(auto_lon)
-                        )
+                        btgt_epsg = get_epsg(btgt_name, zone=utm_zone_from_lon(auto_lon))
                     elif btgt_info["is_utm"]:
                         btgt_epsg = get_epsg(btgt_name, zone=btgt_zone)
                     else:
                         btgt_epsg = get_epsg(btgt_name)
 
                     results = convert_batch(
-                        bsrc_epsg,
-                        btgt_epsg,
-                        coords,
-                        bsrc_info["is_latlon"],
-                        btgt_info["is_latlon"],
-                        tfm_name,
+                        bsrc_epsg, btgt_epsg, coords,
+                        bsrc_info["is_latlon"], btgt_info["is_latlon"], tfm_name,
                     )
 
                     tf1, tf2 = btgt_info["fields"]
@@ -490,9 +438,8 @@ with tab_batch:
             lats = [r[0] for r in br["results"]]
             lons = [r[1] for r in br["results"]]
             batch_map = folium.Map(
-                location=[sum(lats) / len(lats), sum(lons) / len(lons)],
-                zoom_start=7,
-                tiles="CartoDB positron",
+                location=[sum(lats)/len(lats), sum(lons)/len(lons)],
+                zoom_start=7, tiles="CartoDB positron",
             )
             ids = br["out_df"]["ID"].values if br["has_id"] else None
             for i, (lat, lon) in enumerate(zip(lats, lons)):
@@ -556,13 +503,8 @@ with tab_draw:
         else:
             src_epsg = get_epsg(draw_src, zone=draw_zone)
             lat, lon = convert_single(
-                src_epsg,
-                "EPSG:4326",
-                pt_v1,
-                pt_v2,
-                draw_src_info["is_latlon"],
-                True,
-                tfm_name,
+                src_epsg, "EPSG:4326", pt_v1, pt_v2,
+                draw_src_info["is_latlon"], True, tfm_name,
             )
         if "draw_points" not in st.session_state:
             st.session_state.draw_points = []
@@ -576,16 +518,12 @@ with tab_draw:
             st.session_state.draw_points = []
             st.rerun()
     with c2:
-        connect = st.checkbox(
-            "Connect points as polyline", value=True, key="connect_pts"
-        )
+        connect = st.checkbox("Connect points as polyline", value=True, key="connect_pts")
 
     # ── Build folium map ──────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("##### 🗺️ Interactive Map")
-    st.caption(
-        "Use the toolbar on the left to draw markers, lines, polygons, or rectangles."
-    )
+    st.caption("Use the toolbar on the left to draw markers, lines, polygons, or rectangles.")
 
     points = st.session_state.get("draw_points", [])
 
@@ -598,9 +536,7 @@ with tab_draw:
         center_lat, center_lon = 7.95, -1.03  # Ghana center
         zoom = 7
 
-    m = folium.Map(
-        location=[center_lat, center_lon], zoom_start=zoom, tiles="CartoDB positron"
-    )
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, tiles="CartoDB positron")
 
     # Add draw tools
     Draw(

@@ -62,7 +62,8 @@ TRANSFORM_NAMES = list(TRANSFORM_METHODS.keys())
 def _build_waroffice_crs(towgs84: str) -> CRS:
     """Build a War Office geographic CRS with the given towgs84 parameters."""
     proj_str = (
-        "+proj=longlat +a=6378300 +rf=296 " f"+towgs84={towgs84} +no_defs +type=crs"
+        "+proj=longlat +a=6378300 +rf=296 "
+        f"+towgs84={towgs84} +no_defs +type=crs"
     )
     return CRS.from_proj4(proj_str)
 
@@ -89,9 +90,7 @@ def utm_epsg(zone: int, northern: bool = True) -> str:
     return f"EPSG:{base + zone}"
 
 
-def get_epsg(
-    crs_name: str, *, lon: float | None = None, zone: int | None = None
-) -> str:
+def get_epsg(crs_name: str, *, lon: float | None = None, zone: int | None = None) -> str:
     """
     Resolve the EPSG code for a CRS name.
     For UTM, either provide `lon` (auto-detect) or `zone` (manual).
