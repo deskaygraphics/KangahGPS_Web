@@ -736,7 +736,7 @@ with tab_about:
         **Desmond Kangah** — Graduate of the University of Mines and Technology (UMaT), Ghana,
         where he developed the Bursa-Wolf 3D coordinate transformation software as his BSc project
         under the supervision of **Dr. Y. Y. Ziggah**, a Geodesist. Desmond is currently pursuing
-        his PhD in Civil Engineering at Louisiana State University, USA.
+        his PhD in Civil Engineering at Louisiana State University, USA, under the supervision of Dr. Ahmed Abdalla.
 
         ---
         Built with [Streamlit](https://streamlit.io) and [pyproj](https://pyproj4.github.io/pyproj/).
