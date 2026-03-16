@@ -741,8 +741,6 @@ with tab_draw:
             st.session_state.connect_first = None
             st.session_state.connect_last = None
             st.session_state.last_processed_click = None
-            st.session_state.map_center = None
-            st.session_state.map_zoom = None
             st.rerun()
     with c2:
         connect = st.toggle(
@@ -783,13 +781,8 @@ with tab_draw:
         "Use the toolbar on the left to draw markers, lines, polygons, or rectangles."
     )
 
-    # Use saved map position to preserve zoom; fall back to points/Ghana
-    _saved_center = st.session_state.get("map_center")
-    _saved_zoom = st.session_state.get("map_zoom")
-    if _saved_center and _saved_zoom:
-        center_lat, center_lon = _saved_center
-        zoom = _saved_zoom
-    elif points:
+    # Initial map center/zoom (the component key keeps zoom stable across reruns)
+    if points:
         center_lat = sum(p["lat"] for p in points) / len(points)
         center_lon = sum(p["lon"] for p in points) / len(points)
         zoom = 10
@@ -890,12 +883,13 @@ with tab_draw:
                     ),
                 ).add_to(m)
 
-    # Render map
+    # Render map — key keeps the Leaflet instance alive across reruns (preserves zoom/pan)
     map_data = st_folium(
         m,
         width=700,
         height=500,
-        returned_objects=["all_drawings", "last_object_clicked", "center", "zoom"],
+        key="draw_map",
+        returned_objects=["all_drawings", "last_object_clicked"],
     )
 
     # ── Process map clicks for point connection ──────────────────────────
@@ -955,15 +949,7 @@ with tab_draw:
                             st.session_state.connect_last = closest_idx
                     st.rerun()
 
-    # ── Save map position to preserve zoom on rerun ─────────────────────
-    if map_data:
-        if map_data.get("center"):
-            c = map_data["center"]
-            st.session_state.map_center = [c["lat"], c["lng"]]
-        if map_data.get("zoom"):
-            st.session_state.map_zoom = map_data["zoom"]
-
-    # ── Auto-import markers drawn via Draw toolbar ────────────────────
+    # ── Auto-import markers
     if map_data and map_data.get("all_drawings"):
         _new_pts = False
         for _drawing in map_data["all_drawings"]:
