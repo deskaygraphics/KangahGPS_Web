@@ -17,7 +17,7 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
 import folium
-from folium.plugins import Draw, MeasureControl
+from folium.plugins import Draw, MeasureControl, LocateControl
 from streamlit_folium import st_folium
 from converter import (
     CRS_OPTIONS,
@@ -32,6 +32,7 @@ from converter import (
 
 # ── Export helpers ────────────────────────────────────────────────────────────
 
+
 def _make_gdf(df: pd.DataFrame, lat_col: str, lon_col: str) -> gpd.GeoDataFrame:
     """Create a GeoDataFrame from a DataFrame with lat/lon columns."""
     geometry = [Point(lon, lat) for lat, lon in zip(df[lat_col], df[lon_col])]
@@ -43,21 +44,21 @@ def _to_kml(gdf: gpd.GeoDataFrame, name_prefix: str = "Point") -> str:
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<kml xmlns="http://www.opengis.net/kml/2.2">',
-        '<Document>',
-        f'  <name>KangahGPS Export</name>',
+        "<Document>",
+        f"  <name>KangahGPS Export</name>",
     ]
     for i, row in gdf.iterrows():
         pt = row.geometry
-        lines.append('  <Placemark>')
-        lines.append(f'    <name>{name_prefix} {i+1}</name>')
-        lines.append(f'    <description>Lat: {pt.y:.8f}, Lon: {pt.x:.8f}</description>')
-        lines.append('    <Point>')
-        lines.append(f'      <coordinates>{pt.x},{pt.y},0</coordinates>')
-        lines.append('    </Point>')
-        lines.append('  </Placemark>')
-    lines.append('</Document>')
-    lines.append('</kml>')
-    return '\n'.join(lines)
+        lines.append("  <Placemark>")
+        lines.append(f"    <name>{name_prefix} {i+1}</name>")
+        lines.append(f"    <description>Lat: {pt.y:.8f}, Lon: {pt.x:.8f}</description>")
+        lines.append("    <Point>")
+        lines.append(f"      <coordinates>{pt.x},{pt.y},0</coordinates>")
+        lines.append("    </Point>")
+        lines.append("  </Placemark>")
+    lines.append("</Document>")
+    lines.append("</kml>")
+    return "\n".join(lines)
 
 
 def _to_shapefile_zip(gdf: gpd.GeoDataFrame) -> bytes:
@@ -68,13 +69,17 @@ def _to_shapefile_zip(gdf: gpd.GeoDataFrame) -> bytes:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             import os
+
             for fname in os.listdir(tmpdir):
                 zf.write(f"{tmpdir}/{fname}", fname)
         return buf.getvalue()
 
 
 def show_export_buttons(
-    df: pd.DataFrame, lat_col: str, lon_col: str, key_prefix: str,
+    df: pd.DataFrame,
+    lat_col: str,
+    lon_col: str,
+    key_prefix: str,
 ):
     """Show CSV, KML, and Shapefile download buttons."""
     st.markdown("##### 📥 Export")
@@ -111,6 +116,153 @@ def show_export_buttons(
             use_container_width=True,
             key=f"{key_prefix}_shp",
         )
+
+
+# ── Distance helper ──────────────────────────────────────────────────────────
+
+from math import radians, cos, sin, asin, sqrt, atan2, degrees
+
+
+def _haversine(lat1: float, lon1: float, lat2: float, lon2: float):
+    """Return (meters, feet) between two WGS-84 points."""
+    R = 6_371_000
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    a = (
+        sin((lat2 - lat1) / 2) ** 2
+        + cos(lat1) * cos(lat2) * sin((lon2 - lon1) / 2) ** 2
+    )
+    m = R * 2 * asin(sqrt(a))
+    return m, m * 3.28084
+
+
+def _polygon_order(connections):
+    """Return ordered list of point indices forming a closed polygon, or None."""
+    if len(connections) < 3:
+        return None
+    adj = {}
+    for c in connections:
+        i, j = c["from"], c["to"]
+        adj.setdefault(i, []).append(j)
+        adj.setdefault(j, []).append(i)
+    nodes = list(adj)
+    if not all(len(adj[n]) == 2 for n in nodes):
+        return None
+    start = nodes[0]
+    path, prev, cur = [start], None, start
+    for _ in range(len(nodes)):
+        a, b = adj[cur]
+        nxt = b if a == prev else a
+        if nxt == start:
+            break
+        if nxt in path[1:]:
+            return None
+        path.append(nxt)
+        prev, cur = cur, nxt
+    return path if len(path) == len(nodes) and len(path) >= 3 else None
+
+
+def _polygon_area(pts):
+    """Return (m², ft², acres, hectares) for a list of {lat, lon} dicts."""
+    from pyproj import Geod
+    from shapely.geometry import Polygon
+
+    geod = Geod(ellps="WGS84")
+    coords = [(p["lon"], p["lat"]) for p in pts]
+    area_m2 = abs(geod.geometry_area_perimeter(Polygon(coords))[0])
+    return area_m2, area_m2 * 10.7639, area_m2 / 4_046.856, area_m2 / 10_000
+
+
+def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Return bearing in degrees (0=N, 90=E, 180=S, 270=W) from point 1 to point 2."""
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlon = lon2 - lon1
+    x = sin(dlon) * cos(lat2)
+    y = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon)
+    return (degrees(atan2(x, y)) + 360) % 360
+
+
+def _cardinal(brg: float) -> str:
+    """Convert a bearing in degrees to a 16-point compass label (e.g. 'NNE')."""
+    dirs = [
+        "N",
+        "NNE",
+        "NE",
+        "ENE",
+        "E",
+        "ESE",
+        "SE",
+        "SSE",
+        "S",
+        "SSW",
+        "SW",
+        "WSW",
+        "W",
+        "WNW",
+        "NW",
+        "NNW",
+    ]
+    return dirs[round(brg / 22.5) % 16]
+
+
+def _relative_direction(bearing: float, heading: float) -> str:
+    """Return a human-readable turn direction given device heading and bearing to target."""
+    diff = (bearing - heading + 360) % 360
+    if diff < 22.5 or diff >= 337.5:
+        return "straight ahead"
+    elif diff < 67.5:
+        return "bear right"
+    elif diff < 112.5:
+        return "turn right"
+    elif diff < 157.5:
+        return "sharp right"
+    elif diff < 202.5:
+        return "behind you — turn around"
+    elif diff < 247.5:
+        return "sharp left"
+    elif diff < 292.5:
+        return "turn left"
+    else:
+        return "bear left"
+
+
+# ── Basemaps ───────────────────────────────────────────────────────────────
+
+BASEMAPS = {
+    "🏙️ Light (CartoDB)": {"tiles": "CartoDB positron", "attr": None},
+    "🌑 Dark (CartoDB)": {"tiles": "CartoDB dark_matter", "attr": None},
+    "🗺️ Streets (OSM)": {"tiles": "OpenStreetMap", "attr": None},
+    "🛰️ Satellite (Esri)": {
+        "tiles": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "attr": "Tiles &copy; Esri &mdash; Source: Esri, USGS, AeroGRID, IGN & GIS Community",
+    },
+    "🏔️ Topo (Esri)": {
+        "tiles": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+        "attr": "Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China, and the GIS Community",
+    },
+    "🌍 NatGeo (Esri)": {
+        "tiles": "https://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}",
+        "attr": "Tiles &copy; Esri &mdash; National Geographic, Esri, DeLorme, NAVTEQ, UNEP-WCMC, USGS, NASA, ESA, METI, NRCAN, GEBCO, NOAA, iPC",
+    },
+    "🛣️ World Street (Esri)": {
+        "tiles": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+        "attr": "Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China, Esri Thailand, TomTom, 2012",
+    },
+}
+
+
+def _make_map(location: list, zoom: int) -> folium.Map:
+    """Create a folium map with all basemaps switchable via the layer control."""
+    m = folium.Map(location=location, zoom_start=zoom, tiles=None)
+    first = True
+    for name, bm in BASEMAPS.items():
+        tl_kwargs = {"name": name, "show": first}
+        if bm["attr"]:
+            tl_kwargs["attr"] = bm["attr"]
+        folium.TileLayer(bm["tiles"], **tl_kwargs).add_to(m)
+        first = False
+    folium.LayerControl(position="topright", collapsed=True).add_to(m)
+    return m
+
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -152,6 +304,7 @@ with st.sidebar:
     st.info(tfm_info["description"])
     st.markdown(f"`towgs84={tfm_info['towgs84']}`")
 
+
 # ── Tabs ─────────────────────────────────────────────────────────────────────────────
 
 tab_single, tab_batch, tab_draw, tab_about = st.tabs(
@@ -181,13 +334,19 @@ with tab_single:
                 "UTM Zone", min_value=1, max_value=60, value=30, step=1, key="src_zone"
             )
 
-        val1 = st.number_input(f1, format="%.8f" if src_info["is_latlon"] else "%.3f", key="v1")
-        val2 = st.number_input(f2, format="%.8f" if src_info["is_latlon"] else "%.3f", key="v2")
+        val1 = st.number_input(
+            f1, format="%.8f" if src_info["is_latlon"] else "%.3f", key="v1"
+        )
+        val2 = st.number_input(
+            f2, format="%.8f" if src_info["is_latlon"] else "%.3f", key="v2"
+        )
 
     with col_tgt:
         st.subheader("Target")
         default_tgt = 1 if src_name == CRS_NAMES[0] else 0
-        tgt_name = st.selectbox("Target CRS", CRS_NAMES, index=default_tgt, key="tgt_crs")
+        tgt_name = st.selectbox(
+            "Target CRS", CRS_NAMES, index=default_tgt, key="tgt_crs"
+        )
         tgt_info = CRS_OPTIONS[tgt_name]
 
         # UTM zone selector when target is UTM
@@ -196,7 +355,12 @@ with tab_single:
             auto_zone = st.checkbox("Auto-detect UTM zone", value=True, key="auto_zone")
             if not auto_zone:
                 tgt_utm_zone = st.number_input(
-                    "UTM Zone", min_value=1, max_value=60, value=30, step=1, key="tgt_zone"
+                    "UTM Zone",
+                    min_value=1,
+                    max_value=60,
+                    value=30,
+                    step=1,
+                    key="tgt_zone",
                 )
 
     st.markdown("")
@@ -222,8 +386,13 @@ with tab_single:
                             auto_lon = val2
                         else:
                             tmp_lat, tmp_lon = convert_single(
-                                src_epsg, "EPSG:4326", val1, val2,
-                                src_info["is_latlon"], True, tfm_name,
+                                src_epsg,
+                                "EPSG:4326",
+                                val1,
+                                val2,
+                                src_info["is_latlon"],
+                                True,
+                                tfm_name,
                             )
                             auto_lon = tmp_lon
                         detected_zone = utm_zone_from_lon(auto_lon)
@@ -232,18 +401,28 @@ with tab_single:
                     tgt_epsg = get_epsg(tgt_name)
 
                 out1, out2 = convert_single(
-                    src_epsg, tgt_epsg, val1, val2,
-                    src_info["is_latlon"], tgt_info["is_latlon"], tfm_name,
+                    src_epsg,
+                    tgt_epsg,
+                    val1,
+                    val2,
+                    src_info["is_latlon"],
+                    tgt_info["is_latlon"],
+                    tfm_name,
                 )
 
                 # Store results in session state so they persist
                 st.session_state.single_result = {
-                    "out1": out1, "out2": out2,
-                    "tf1": tgt_info["fields"][0], "tf2": tgt_info["fields"][1],
+                    "out1": out1,
+                    "out2": out2,
+                    "tf1": tgt_info["fields"][0],
+                    "tf2": tgt_info["fields"][1],
                     "is_latlon": tgt_info["is_latlon"],
                     "src_is_latlon": src_info["is_latlon"],
-                    "src_val1": val1, "src_val2": val2,
-                    "zone": (tgt_utm_zone or detected_zone) if tgt_info["is_utm"] else None,
+                    "src_val1": val1,
+                    "src_val2": val2,
+                    "zone": (
+                        (tgt_utm_zone or detected_zone) if tgt_info["is_utm"] else None
+                    ),
                 }
 
             except Exception as e:
@@ -267,10 +446,7 @@ with tab_single:
         # Map preview
         if r["is_latlon"]:
             st.markdown("##### 🗺️ Map Preview")
-            preview = folium.Map(
-                location=[out1, out2], zoom_start=10,
-                tiles="CartoDB positron",
-            )
+            preview = _make_map([out1, out2], 10)
             folium.Marker(
                 [out1, out2],
                 popup=f"Lat: {out1:.6f}<br>Lon: {out2:.6f}",
@@ -279,10 +455,7 @@ with tab_single:
             st_folium(preview, width=700, height=400, key="single_map")
         elif r["src_is_latlon"]:
             st.markdown("##### 🗺️ Map Preview (source location)")
-            preview = folium.Map(
-                location=[r["src_val1"], r["src_val2"]], zoom_start=10,
-                tiles="CartoDB positron",
-            )
+            preview = _make_map([r["src_val1"], r["src_val2"]], 10)
             folium.Marker(
                 [r["src_val1"], r["src_val2"]],
                 popup=f"Lat: {r['src_val1']:.6f}<br>Lon: {r['src_val2']:.6f}",
@@ -290,10 +463,33 @@ with tab_single:
             ).add_to(preview)
             st_folium(preview, width=700, height=400, key="single_map_src")
 
+        # Send to Draw
+        _send_lat = (
+            out1 if r["is_latlon"] else (r["src_val1"] if r["src_is_latlon"] else None)
+        )
+        _send_lon = (
+            out2 if r["is_latlon"] else (r["src_val2"] if r["src_is_latlon"] else None)
+        )
+        if _send_lat is not None:
+            if st.button(
+                "📌 Send to Draw", key="single_send_draw", use_container_width=True
+            ):
+                if "draw_points" not in st.session_state:
+                    st.session_state.draw_points = []
+                st.session_state.draw_points.append(
+                    {"lat": _send_lat, "lon": _send_lon}
+                )
+                st.success(
+                    f"Point sent to Draw & Plot tab! ({_send_lat:.6f}, {_send_lon:.6f})"
+                )
+
         # Export single point
-        single_df = pd.DataFrame({
-            r["tf1"]: [out1], r["tf2"]: [out2],
-        })
+        single_df = pd.DataFrame(
+            {
+                r["tf1"]: [out1],
+                r["tf2"]: [out2],
+            }
+        )
         if r["is_latlon"]:
             show_export_buttons(single_df, r["tf1"], r["tf2"], "single")
 
@@ -316,9 +512,7 @@ with tab_batch:
         bsrc_info = CRS_OPTIONS[bsrc_name]
         bsrc_zone = None
         if bsrc_info["is_utm"]:
-            bsrc_zone = st.number_input(
-                "Source UTM Zone", 1, 60, 30, key="bsrc_zone"
-            )
+            bsrc_zone = st.number_input("Source UTM Zone", 1, 60, 30, key="bsrc_zone")
     with bcol2:
         btgt_name = st.selectbox("Target CRS", CRS_NAMES, index=1, key="btgt")
         btgt_info = CRS_OPTIONS[btgt_name]
@@ -364,7 +558,11 @@ with tab_batch:
                         key="x_col",
                     )
                 with mc3:
-                    default_y = col_names.index(x_col) + 1 if col_names.index(x_col) + 1 < len(col_names) else 0
+                    default_y = (
+                        col_names.index(x_col) + 1
+                        if col_names.index(x_col) + 1 < len(col_names)
+                        else 0
+                    )
                     remaining = [c for c in col_names if c != x_col]
                     y_col = st.selectbox(
                         f"{bf2} column",
@@ -373,7 +571,9 @@ with tab_batch:
                         key="y_col",
                     )
 
-                if st.button("🔄  Convert All", use_container_width=True, key="batch_btn"):
+                if st.button(
+                    "🔄  Convert All", use_container_width=True, key="batch_btn"
+                ):
                     coords = list(zip(df[x_col], df[y_col]))
 
                     # Resolve EPSGs
@@ -388,18 +588,29 @@ with tab_batch:
                             auto_lon = first_v2
                         else:
                             _, auto_lon = convert_single(
-                                bsrc_epsg, "EPSG:4326", first_v1, first_v2,
-                                bsrc_info["is_latlon"], True, tfm_name,
+                                bsrc_epsg,
+                                "EPSG:4326",
+                                first_v1,
+                                first_v2,
+                                bsrc_info["is_latlon"],
+                                True,
+                                tfm_name,
                             )
-                        btgt_epsg = get_epsg(btgt_name, zone=utm_zone_from_lon(auto_lon))
+                        btgt_epsg = get_epsg(
+                            btgt_name, zone=utm_zone_from_lon(auto_lon)
+                        )
                     elif btgt_info["is_utm"]:
                         btgt_epsg = get_epsg(btgt_name, zone=btgt_zone)
                     else:
                         btgt_epsg = get_epsg(btgt_name)
 
                     results = convert_batch(
-                        bsrc_epsg, btgt_epsg, coords,
-                        bsrc_info["is_latlon"], btgt_info["is_latlon"], tfm_name,
+                        bsrc_epsg,
+                        btgt_epsg,
+                        coords,
+                        bsrc_info["is_latlon"],
+                        btgt_info["is_latlon"],
+                        tfm_name,
                     )
 
                     tf1, tf2 = btgt_info["fields"]
@@ -437,10 +648,7 @@ with tab_batch:
             st.markdown("##### 🗺️ Map Preview")
             lats = [r[0] for r in br["results"]]
             lons = [r[1] for r in br["results"]]
-            batch_map = folium.Map(
-                location=[sum(lats)/len(lats), sum(lons)/len(lons)],
-                zoom_start=7, tiles="CartoDB positron",
-            )
+            batch_map = _make_map([sum(lats) / len(lats), sum(lons) / len(lons)], 7)
             ids = br["out_df"]["ID"].values if br["has_id"] else None
             for i, (lat, lon) in enumerate(zip(lats, lons)):
                 label = f"ID: {ids[i]}" if ids is not None else f"Point {i+1}"
@@ -459,6 +667,14 @@ with tab_batch:
             conv_cols = [c for c in out_df.columns if "(converted)" in c]
             if len(conv_cols) >= 2:
                 show_export_buttons(out_df, conv_cols[0], conv_cols[1], "batch")
+            if st.button(
+                "📌 Send All to Draw", key="batch_send_draw", use_container_width=True
+            ):
+                if "draw_points" not in st.session_state:
+                    st.session_state.draw_points = []
+                for lat, lon in br["results"]:
+                    st.session_state.draw_points.append({"lat": lat, "lon": lon})
+                st.success(f"Sent {len(br['results'])} points to Draw & Plot tab!")
         else:
             csv_bytes = br["out_df"].to_csv(index=False).encode("utf-8")
             st.download_button(
@@ -503,8 +719,13 @@ with tab_draw:
         else:
             src_epsg = get_epsg(draw_src, zone=draw_zone)
             lat, lon = convert_single(
-                src_epsg, "EPSG:4326", pt_v1, pt_v2,
-                draw_src_info["is_latlon"], True, tfm_name,
+                src_epsg,
+                "EPSG:4326",
+                pt_v1,
+                pt_v2,
+                draw_src_info["is_latlon"],
+                True,
+                tfm_name,
             )
         if "draw_points" not in st.session_state:
             st.session_state.draw_points = []
@@ -516,19 +737,59 @@ with tab_draw:
     with c1:
         if st.button("🗑️ Clear All Points", key="clear_pts"):
             st.session_state.draw_points = []
+            st.session_state.connections = []
+            st.session_state.connect_first = None
+            st.session_state.connect_last = None
+            st.session_state.last_processed_click = None
+            st.session_state.map_center = None
+            st.session_state.map_zoom = None
             st.rerun()
     with c2:
-        connect = st.checkbox("Connect points as polyline", value=True, key="connect_pts")
+        connect = st.toggle(
+            "Connect points as polyline", value=False, key="connect_pts"
+        )
+
+    points = st.session_state.get("draw_points", [])
+
+    if connect:
+        _cl_ui = st.session_state.get("connect_last")
+        _cf_ui = st.session_state.get("connect_first")
+        if len(points) < 2:
+            st.info("ℹ️ Add at least 2 points to start connecting.")
+        elif _cl_ui is None:
+            st.info("🖱️ Click a point on the map to start the chain.")
+        elif not st.session_state.get("connections"):
+            st.info(
+                f"📍 **Point {_cl_ui + 1}** selected — click the next point to connect."
+            )
+        else:
+            st.info(
+                f"🔗 Continuing from **Point {_cl_ui + 1}** — click next point, or click **Point {_cf_ui + 1}** to close the polygon."
+            )
+        if st.session_state.get("connections"):
+            if st.button(
+                "🗑️ Clear Connections", key="clear_conns", use_container_width=True
+            ):
+                st.session_state.connections = []
+                st.session_state.connect_first = None
+                st.session_state.connect_last = None
+                st.session_state.last_processed_click = None
+                st.rerun()
 
     # ── Build folium map ──────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("##### 🗺️ Interactive Map")
-    st.caption("Use the toolbar on the left to draw markers, lines, polygons, or rectangles.")
+    st.caption(
+        "Use the toolbar on the left to draw markers, lines, polygons, or rectangles."
+    )
 
-    points = st.session_state.get("draw_points", [])
-
-    # Center map on Ghana or on the points
-    if points:
+    # Use saved map position to preserve zoom; fall back to points/Ghana
+    _saved_center = st.session_state.get("map_center")
+    _saved_zoom = st.session_state.get("map_zoom")
+    if _saved_center and _saved_zoom:
+        center_lat, center_lon = _saved_center
+        zoom = _saved_zoom
+    elif points:
         center_lat = sum(p["lat"] for p in points) / len(points)
         center_lon = sum(p["lon"] for p in points) / len(points)
         zoom = 10
@@ -536,7 +797,7 @@ with tab_draw:
         center_lat, center_lon = 7.95, -1.03  # Ghana center
         zoom = 7
 
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, tiles="CartoDB positron")
+    m = _make_map([center_lat, center_lon], zoom)
 
     # Add draw tools
     Draw(
@@ -553,34 +814,201 @@ with tab_draw:
 
     # Add measure tool
     MeasureControl(
-        primary_length_unit="meters",
-        secondary_length_unit="kilometers",
+        primary_length_unit="feet",
+        secondary_length_unit="meters",
         primary_area_unit="sqmeters",
         secondary_area_unit="hectares",
     ).add_to(m)
 
-    # Plot user points
+    # GPS live location tracking (uses browser/device GPS)
+    LocateControl(
+        auto_start=False,
+        flyTo=True,
+        keepCurrentZoomLevel=False,
+        strings={"title": "Track my location"},
+        locateOptions={
+            "enableHighAccuracy": True,
+            "maxAge": 0,
+            "timeout": 10000,
+            "watch": True,
+        },
+    ).add_to(m)
+
+    # Plot user points: blue = chain tip, green = start point (click to close)
+    _connect_first = st.session_state.get("connect_first")
+    _connect_last = st.session_state.get("connect_last")
     for i, pt in enumerate(points):
+        if connect and i == _connect_last:
+            color = "blue"
+        elif connect and i == _connect_first and _connect_first != _connect_last:
+            color = "green"
+        else:
+            color = "red"
         folium.Marker(
             location=[pt["lat"], pt["lon"]],
             popup=f"Point {i+1}<br>Lat: {pt['lat']:.6f}<br>Lon: {pt['lon']:.6f}",
             tooltip=f"Point {i+1}",
-            icon=folium.Icon(color="red", icon="info-sign"),
+            icon=folium.Icon(color=color, icon="info-sign"),
         ).add_to(m)
 
-    # Connect points as polyline
-    if connect and len(points) >= 2:
-        line_coords = [[p["lat"], p["lon"]] for p in points]
-        folium.PolyLine(
-            locations=line_coords,
-            color="#e74c3c",
-            weight=3,
-            opacity=0.8,
-            tooltip="Connected points",
-        ).add_to(m)
+    # Draw connections with distance labels + polygon fill if closed
+    _conns = st.session_state.get("connections", [])
+    _poly_order = _polygon_order(_conns) if connect else None
+    if connect:
+        # Filled polygon if connections form a closed loop
+        if _poly_order:
+            poly_coords = [[points[i]["lat"], points[i]["lon"]] for i in _poly_order]
+            folium.Polygon(
+                locations=poly_coords,
+                color="#3498db",
+                weight=2,
+                fill=True,
+                fill_color="#3498db",
+                fill_opacity=0.15,
+                dash_array="6 4",
+                tooltip="Closed polygon",
+            ).add_to(m)
+        for conn in _conns:
+            i, j = conn["from"], conn["to"]
+            if i < len(points) and j < len(points):
+                p1, p2 = points[i], points[j]
+                folium.PolyLine(
+                    locations=[[p1["lat"], p1["lon"]], [p2["lat"], p2["lon"]]],
+                    color="#e74c3c",
+                    weight=3,
+                    opacity=0.8,
+                ).add_to(m)
+                mid_lat = (p1["lat"] + p2["lat"]) / 2
+                mid_lon = (p1["lon"] + p2["lon"]) / 2
+                label = f"{conn['feet']:.1f} ft  |  {conn['meters']:.1f} m"
+                folium.Marker(
+                    location=[mid_lat, mid_lon],
+                    icon=folium.DivIcon(
+                        html=f'<div style="font-size:11px;color:#c0392b;font-weight:bold;white-space:nowrap;text-shadow:1px 1px 2px white,-1px -1px 2px white;">{label}</div>',
+                        icon_size=(180, 22),
+                        icon_anchor=(90, 11),
+                    ),
+                ).add_to(m)
 
     # Render map
-    map_data = st_folium(m, width=700, height=500, returned_objects=["all_drawings"])
+    map_data = st_folium(
+        m,
+        width=700,
+        height=500,
+        returned_objects=["all_drawings", "last_object_clicked", "center", "zoom"],
+    )
+
+    # ── Process map clicks for point connection ──────────────────────────
+    if connect and map_data and len(points) >= 2:
+        clicked = map_data.get("last_object_clicked")
+        last_processed = st.session_state.get("last_processed_click")
+        if clicked and clicked != last_processed:
+            clat = clicked.get("lat")
+            clng = clicked.get("lng")
+            if clat is not None and clng is not None:
+                closest_idx = min(
+                    range(len(points)),
+                    key=lambda k: (points[k]["lat"] - clat) ** 2
+                    + (points[k]["lon"] - clng) ** 2,
+                )
+                min_d = (points[closest_idx]["lat"] - clat) ** 2 + (
+                    points[closest_idx]["lon"] - clng
+                ) ** 2
+                if min_d < 1e-6:
+                    st.session_state.last_processed_click = clicked
+                    _cf = st.session_state.get("connect_first")
+                    _cl = st.session_state.get("connect_last")
+                    if _cl is None:
+                        # First click — start the chain
+                        st.session_state.connect_first = closest_idx
+                        st.session_state.connect_last = closest_idx
+                    elif closest_idx == _cl:
+                        pass  # clicked the same point, ignore
+                    else:
+                        # Draw line from chain tip to the new point
+                        p1, p2 = points[_cl], points[closest_idx]
+                        meters, feet = _haversine(
+                            p1["lat"], p1["lon"], p2["lat"], p2["lon"]
+                        )
+                        if "connections" not in st.session_state:
+                            st.session_state.connections = []
+                        pairs = [
+                            (c["from"], c["to"]) for c in st.session_state.connections
+                        ]
+                        if (_cl, closest_idx) not in pairs and (
+                            closest_idx,
+                            _cl,
+                        ) not in pairs:
+                            st.session_state.connections.append(
+                                {
+                                    "from": _cl,
+                                    "to": closest_idx,
+                                    "meters": meters,
+                                    "feet": feet,
+                                }
+                            )
+                        if closest_idx == _cf:
+                            # Clicked the start point — polygon closed!
+                            st.session_state.connect_first = None
+                            st.session_state.connect_last = None
+                        else:
+                            st.session_state.connect_last = closest_idx
+                    st.rerun()
+
+    # ── Save map position to preserve zoom on rerun ─────────────────────
+    if map_data:
+        if map_data.get("center"):
+            c = map_data["center"]
+            st.session_state.map_center = [c["lat"], c["lng"]]
+        if map_data.get("zoom"):
+            st.session_state.map_zoom = map_data["zoom"]
+
+    # ── Auto-import markers drawn via Draw toolbar ────────────────────
+    if map_data and map_data.get("all_drawings"):
+        _new_pts = False
+        for _drawing in map_data["all_drawings"]:
+            if _drawing.get("geometry", {}).get("type") == "Point":
+                _dlon, _dlat = _drawing["geometry"]["coordinates"]
+                _existing = st.session_state.get("draw_points", [])
+                if not any(
+                    abs(p["lat"] - _dlat) < 1e-8 and abs(p["lon"] - _dlon) < 1e-8
+                    for p in _existing
+                ):
+                    st.session_state.setdefault("draw_points", []).append(
+                        {"lat": _dlat, "lon": _dlon}
+                    )
+                    _new_pts = True
+        if _new_pts:
+            st.rerun()
+
+    # ── Polygon area ──────────────────────────────────────────────────────
+    if connect and _poly_order and len(_poly_order) >= 3:
+        _poly_pts = [points[i] for i in _poly_order]
+        _m2, _ft2, _acres, _ha = _polygon_area(_poly_pts)
+        st.markdown("##### 📐 Polygon Area")
+        ac1, ac2, ac3, ac4 = st.columns(4)
+        ac1.metric("m²", f"{_m2:,.2f}")
+        ac2.metric("ft²", f"{_ft2:,.2f}")
+        ac3.metric("Acres", f"{_acres:.4f}")
+        ac4.metric("Hectares", f"{_ha:.4f}")
+
+    # ── Connections list with individual delete ─────────────────────────
+    if connect and st.session_state.get("connections"):
+        st.markdown("##### 🔗 Connections")
+        for _cidx in range(len(st.session_state.connections) - 1, -1, -1):
+            _conn = st.session_state.connections[_cidx]
+            _ci, _cj = _conn["from"], _conn["to"]
+            _cl1, _cl2 = st.columns([8, 1])
+            with _cl1:
+                st.write(
+                    f"Point {_ci+1} → Point {_cj+1}: **{_conn['feet']:.1f} ft** | **{_conn['meters']:.1f} m**"
+                )
+            with _cl2:
+                if st.button("✕", key=f"del_conn_{_cidx}", help="Delete"):
+                    st.session_state.connections.pop(_cidx)
+                    st.session_state.connect_first = None
+                    st.session_state.connect_last = None
+                    st.rerun()
 
     # ── Show drawn features as GeoJSON ────────────────────────────────────
     if map_data and map_data.get("all_drawings"):
@@ -602,15 +1030,37 @@ with tab_draw:
                 use_container_width=True,
             )
 
-    # ── Points table ──────────────────────────────────────────────────────
+    # ── Points table with individual delete ────────────────────────────
     if points:
         st.markdown("##### Points Table")
-        pts_df = pd.DataFrame(points)
-        pts_df.index = range(1, len(pts_df) + 1)
-        pts_df.index.name = "#"
-        st.dataframe(pts_df, use_container_width=True)
+        for _pidx in range(len(points)):
+            _pt = points[_pidx]
+            _pp1, _pp2, _pp3 = st.columns([1, 7, 1])
+            with _pp1:
+                st.write(f"**{_pidx + 1}**")
+            with _pp2:
+                st.write(f"Lat: {_pt['lat']:.6f}  |  Lon: {_pt['lon']:.6f}")
+            with _pp3:
+                if st.button("✕", key=f"del_pt_{_pidx}", help="Delete point"):
+                    st.session_state.draw_points.pop(_pidx)
+                    # Remove connections involving this point and remap the rest
+                    _new_conns = []
+                    for _c in st.session_state.get("connections", []):
+                        if _c["from"] == _pidx or _c["to"] == _pidx:
+                            continue
+                        _new_conns.append(
+                            {
+                                **_c,
+                                "from": _c["from"] - (1 if _c["from"] > _pidx else 0),
+                                "to": _c["to"] - (1 if _c["to"] > _pidx else 0),
+                            }
+                        )
+                    st.session_state.connections = _new_conns
+                    st.session_state.connect_first = None
+                    st.session_state.connect_last = None
+                    st.rerun()
 
-        csv_bytes = pts_df.to_csv(index=True).encode("utf-8")
+        csv_bytes = pd.DataFrame(points).to_csv(index=True).encode("utf-8")
         st.download_button(
             "⬇️ Download Points (CSV)",
             data=csv_bytes,
@@ -619,6 +1069,212 @@ with tab_draw:
             use_container_width=True,
             key="dl_pts",
         )
+
+    # ── Navigate to Boundary Points ──────────────────────────────────────────
+    st.markdown("---")
+    with st.expander("🧭 Navigate to Boundary Points", expanded=False):
+        if not points:
+            st.info("Add boundary points above, then use navigation here.")
+        else:
+            nav_src = st.radio(
+                "Location source",
+                ["📍 Browser GPS", "⌨️ Enter manually"],
+                horizontal=True,
+                key="nav_source",
+            )
+            my_loc = None
+
+            if nav_src == "📍 Browser GPS":
+                st.caption(
+                    "Enable GPS to fetch your live position from the browser/device. "
+                    "Allow location access when prompted."
+                )
+                gps_on = st.toggle("🛰️ Enable GPS", key="nav_gps_toggle")
+                if gps_on:
+                    try:
+                        from streamlit_js_eval import get_geolocation  # noqa: PLC0415
+
+                        raw = get_geolocation()
+                        if raw and raw.get("coords"):
+                            _c = raw["coords"]
+                            my_loc = {
+                                "lat": _c["latitude"],
+                                "lon": _c["longitude"],
+                                "accuracy": _c.get("accuracy"),
+                                "heading": _c.get("heading"),
+                            }
+                            st.session_state.nav_location = my_loc
+                    except ImportError:
+                        st.warning(
+                            "📦 `streamlit-js-eval` not installed. "
+                            "Run `pip install streamlit-js-eval` or switch to manual entry."
+                        )
+            else:
+                nm1, nm2 = st.columns(2)
+                with nm1:
+                    man_lat = st.number_input(
+                        "My Latitude",
+                        format="%.8f",
+                        key="nav_man_lat",
+                        help="Your current latitude in WGS84",
+                    )
+                with nm2:
+                    man_lon = st.number_input(
+                        "My Longitude",
+                        format="%.8f",
+                        key="nav_man_lon",
+                        help="Your current longitude in WGS84",
+                    )
+                if st.button(
+                    "📍 Use these coordinates",
+                    key="nav_use_manual",
+                    use_container_width=True,
+                ):
+                    st.session_state.nav_location = {
+                        "lat": man_lat,
+                        "lon": man_lon,
+                        "accuracy": None,
+                        "heading": None,
+                    }
+
+            # Fall back to last known location stored in session
+            if my_loc is None:
+                my_loc = st.session_state.get("nav_location")
+
+            if my_loc is None:
+                st.info(
+                    "Enable GPS or enter your coordinates to see navigation guidance."
+                )
+            else:
+                # ── Accuracy badge ────────────────────────────────────────────
+                _acc = my_loc.get("accuracy")
+                _hdg = my_loc.get("heading")
+                if _acc is not None:
+                    if _acc < 5:
+                        _albl, _acol = f"±{_acc:.1f} m — Excellent", "green"
+                    elif _acc < 15:
+                        _albl, _acol = f"±{_acc:.1f} m — Good", "green"
+                    elif _acc < 50:
+                        _albl, _acol = f"±{_acc:.1f} m — Fair", "orange"
+                    else:
+                        _albl, _acol = f"±{_acc:.1f} m — Poor", "red"
+                    st.markdown(
+                        f"**GPS Accuracy:** :{_acol}[{_albl}] &nbsp;&nbsp; "
+                        f"**Position:** `{my_loc['lat']:.6f}, {my_loc['lon']:.6f}`"
+                    )
+                else:
+                    st.markdown(
+                        f"**Position:** `{my_loc['lat']:.6f}, {my_loc['lon']:.6f}`"
+                    )
+                if _hdg is not None:
+                    st.caption(f"Device heading: {_hdg:.0f}° (direction of travel)")
+                else:
+                    st.caption(
+                        "Heading not available — left/right guidance requires the "
+                        "device to be moving."
+                    )
+
+                # ── Distance + direction to each point ────────────────────────
+                _nav = []
+                for _ni, _npt in enumerate(points):
+                    _dm, _df = _haversine(
+                        my_loc["lat"], my_loc["lon"], _npt["lat"], _npt["lon"]
+                    )
+                    _brg = _bearing(
+                        my_loc["lat"], my_loc["lon"], _npt["lat"], _npt["lon"]
+                    )
+                    _card = _cardinal(_brg)
+                    _rel = _relative_direction(_brg, _hdg) if _hdg is not None else None
+                    _nav.append(
+                        {
+                            "idx": _ni,
+                            "dist_m": _dm,
+                            "dist_ft": _df,
+                            "bearing": _brg,
+                            "cardinal": _card,
+                            "rel": _rel,
+                        }
+                    )
+                _nav.sort(key=lambda x: x["dist_m"])  # nearest first
+
+                st.markdown("##### Boundary Points — nearest first")
+                for _nr in _nav:
+                    _dm, _df = _nr["dist_m"], _nr["dist_ft"]
+                    _icon = "🟢" if _dm < 3 else ("🟡" if _dm < 25 else "🔴")
+                    _dir_txt = f"Head **{_nr['cardinal']}** ({_nr['bearing']:.0f}°)"
+                    if _nr["rel"]:
+                        _dir_txt += f" — **{_nr['rel']}**"
+                    _arrived = "  ✅ **You're here!**" if _dm < 3 else ""
+                    st.markdown(
+                        f"{_icon} **Point {_nr['idx']+1}** &nbsp;—&nbsp; "
+                        f"`{_dm:.1f} m` / `{_df:.1f} ft` &nbsp; · &nbsp; {_dir_txt}{_arrived}"
+                    )
+
+                # ── Navigation mini-map ───────────────────────────────────────
+                st.markdown("---")
+                st.markdown("**Navigation Map**")
+                _nmap = _make_map([my_loc["lat"], my_loc["lon"]], 16)
+                # Current position
+                folium.Marker(
+                    [my_loc["lat"], my_loc["lon"]],
+                    popup=(
+                        f"📍 My Location<br>Acc: ±{_acc:.1f} m"
+                        if _acc
+                        else "📍 My Location"
+                    ),
+                    tooltip="📍 My Location",
+                    icon=folium.Icon(color="blue", icon="user", prefix="fa"),
+                ).add_to(_nmap)
+                if _acc:
+                    folium.Circle(
+                        [my_loc["lat"], my_loc["lon"]],
+                        radius=_acc,
+                        color="#3498db",
+                        fill=True,
+                        fill_opacity=0.12,
+                        weight=2,
+                        dash_array="4 4",
+                        tooltip=f"GPS accuracy ±{_acc:.1f} m",
+                    ).add_to(_nmap)
+                # Boundary point markers + dashed guide lines
+                for _nr in _nav:
+                    _i = _nr["idx"]
+                    _npt = points[_i]
+                    folium.Marker(
+                        [_npt["lat"], _npt["lon"]],
+                        popup=(
+                            f"<b>Point {_i+1}</b><br>"
+                            f"{_nr['dist_m']:.1f} m / {_nr['dist_ft']:.1f} ft<br>"
+                            f"Head {_nr['cardinal']} ({_nr['bearing']:.0f}°)"
+                            + (f"<br>→ {_nr['rel']}" if _nr["rel"] else "")
+                        ),
+                        tooltip=f"Point {_i+1}: {_nr['dist_m']:.1f} m | {_nr['cardinal']}",
+                        icon=folium.Icon(color="red", icon="info-sign"),
+                    ).add_to(_nmap)
+                    folium.PolyLine(
+                        [[my_loc["lat"], my_loc["lon"]], [_npt["lat"], _npt["lon"]]],
+                        color="#e74c3c",
+                        weight=2,
+                        opacity=0.75,
+                        dash_array="6 5",
+                        tooltip=f"{_nr['dist_m']:.1f} m | {_nr['cardinal']}",
+                    ).add_to(_nmap)
+                    _mlat = (my_loc["lat"] + _npt["lat"]) / 2
+                    _mlon = (my_loc["lon"] + _npt["lon"]) / 2
+                    folium.Marker(
+                        [_mlat, _mlon],
+                        icon=folium.DivIcon(
+                            html=(
+                                f'<div style="font-size:10px;color:#c0392b;font-weight:bold;'
+                                f"white-space:nowrap;text-shadow:1px 1px 2px white,"
+                                f'-1px -1px 2px white;">'
+                                f'P{_i+1}: {_nr["dist_m"]:.0f} m</div>'
+                            ),
+                            icon_size=(120, 18),
+                            icon_anchor=(60, 9),
+                        ),
+                    ).add_to(_nmap)
+                st_folium(_nmap, width=700, height=450, key="nav_map")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
