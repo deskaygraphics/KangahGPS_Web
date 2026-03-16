@@ -1302,3 +1302,24 @@ with tab_about:
         Built with [Streamlit](https://streamlit.io) and [pyproj](https://pyproj4.github.io/pyproj/).
         """
     )
+
+    st.markdown("---")
+    st.subheader("👨‍💻 Developer")
+    st.markdown(
+        """
+        **Desmond Kangah**
+
+        Surveyor & Geospatial Engineer
+
+        - 🎓 B.Sc. Geomatic Engineering — **University of Mines and Technology (UMaT), Ghana** · *First Class Honours*
+        - 👨‍🏫 Supervised by **Dr. Yao Yevenyo Ziggah** (Geodesist, UMaT)
+        - 🇺🇸 Currently pursuing a **Ph.D. in Civil Engineering** in the United States
+
+        **Research Areas**
+        - InSAR (Interferometric Synthetic Aperture Radar)
+        - Geodesy
+        - Remote Sensing
+        - GIS (Geographic Information Systems)
+        - Photogrammetry
+        """
+    )
