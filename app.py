@@ -1314,6 +1314,7 @@ with tab_about:
         - 🎓 B.Sc. Geomatic Engineering — **University of Mines and Technology (UMaT), Ghana** · *First Class Honours*
         - 👨‍🏫 Supervised by **Dr. Yao Yevenyo Ziggah** (Geodesist, UMaT)
         - 🇺🇸 Currently pursuing a **Ph.D. in Civil Engineering** in the United States
+          under the supervision of **Dr. Ahmed Abdalla**
 
         **Research Areas**
         - InSAR (Interferometric Synthetic Aperture Radar)
