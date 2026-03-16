@@ -260,7 +260,7 @@ def _make_map(location: list, zoom: int) -> folium.Map:
             tl_kwargs["attr"] = bm["attr"]
         folium.TileLayer(bm["tiles"], **tl_kwargs).add_to(m)
         first = False
-    folium.LayerControl(position="topright", collapsed=True).add_to(m)
+    folium.LayerControl(position="topright", collapsed=False).add_to(m)
     return m
 
 
