@@ -260,7 +260,7 @@ def _make_map(location: list, zoom: int) -> folium.Map:
             tl_kwargs["attr"] = bm["attr"]
         folium.TileLayer(bm["tiles"], **tl_kwargs).add_to(m)
         first = False
-    folium.LayerControl(position="topright", collapsed=False).add_to(m)
+    folium.LayerControl(position="topright", collapsed=True).add_to(m)
     return m
 
 
@@ -778,7 +778,8 @@ with tab_draw:
     st.markdown("---")
     st.markdown("##### 🗺️ Interactive Map")
     st.caption(
-        "Use the toolbar on the left to draw markers, lines, polygons, or rectangles."
+        "Use the toolbar on the left to draw markers, lines, polygons, or rectangles. "
+        "Click the **⊞ layers icon** in the top-right corner of the map to switch basemaps."
     )
 
     # Initial map center/zoom (the component key keeps zoom stable across reruns)
