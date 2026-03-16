@@ -29,7 +29,6 @@ from converter import (
     utm_zone_from_lon,
 )
 
-
 # ── Export helpers ────────────────────────────────────────────────────────────
 
 
@@ -1270,8 +1269,7 @@ with tab_draw:
 
 with tab_about:
     st.subheader("About KangahGPS")
-    st.markdown(
-        """
+    st.markdown("""
         **KangahGPS** is a coordinate conversion tool built for Ghana.
 
         #### Supported Coordinate Systems
@@ -1300,13 +1298,11 @@ with tab_about:
 
         ---
         Built with [Streamlit](https://streamlit.io) and [pyproj](https://pyproj4.github.io/pyproj/).
-        """
-    )
+        """)
 
     st.markdown("---")
     st.subheader("👨‍💻 Developer")
-    st.markdown(
-        """
+    st.markdown("""
         **Desmond Kangah**
 
         Surveyor & Geospatial Engineer
@@ -1322,5 +1318,4 @@ with tab_about:
         - Remote Sensing
         - GIS (Geographic Information Systems)
         - Photogrammetry
-        """
-    )
+        """)
