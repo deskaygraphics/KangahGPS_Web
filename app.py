@@ -890,21 +890,21 @@ with tab_draw:
             tooltip=_pt_display,
             icon=folium.Icon(color=color, icon="info-sign"),
         ).add_to(m)
-        # Permanent label above the marker
-        if _pt_lbl:
-            folium.Marker(
-                location=[pt["lat"], pt["lon"]],
-                icon=folium.DivIcon(
-                    html=(
-                        f'<div style="font-size:11px;font-weight:bold;color:#1a1a2e;'
-                        f"white-space:nowrap;text-shadow:1px 1px 2px white,"
-                        f'-1px -1px 2px white;margin-top:-38px;">'
-                        f"{_pt_lbl}</div>"
-                    ),
-                    icon_size=(140, 20),
-                    icon_anchor=(70, 20),
+        # Permanent label above the marker — always shown
+        _map_lbl = _pt_lbl if _pt_lbl else f"P{i + 1}"
+        folium.Marker(
+            location=[pt["lat"], pt["lon"]],
+            icon=folium.DivIcon(
+                html=(
+                    f'<div style="font-size:11px;font-weight:bold;color:#1a1a2e;'
+                    f"white-space:nowrap;text-shadow:1px 1px 2px white,"
+                    f'-1px -1px 2px white;margin-top:-38px;">'
+                    f"{_map_lbl}</div>"
                 ),
-            ).add_to(m)
+                icon_size=(140, 20),
+                icon_anchor=(70, 20),
+            ),
+        ).add_to(m)
 
     # Draw connections with distance labels + polygon fill if closed
     _conns = st.session_state.get("connections", [])
