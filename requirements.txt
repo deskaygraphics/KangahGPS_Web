@@ -1,5 +1,6 @@
 folium>=0.15
 geopandas>=0.14
+openpyxl>=3.1
 pandas
 pyproj>=3.6
 shapely>=2.0

@@ -308,7 +308,7 @@ with st.sidebar:
 # ── Tabs ─────────────────────────────────────────────────────────────────────────────
 
 tab_single, tab_batch, tab_draw, tab_about = st.tabs(
-    ["📍 Single Conversion", "📄 Batch Conversion (CSV)", "✏️ Draw & Plot", "ℹ️ About"]
+    ["📍 Single Conversion", "📄 Batch Conversion", "✏️ Draw & Plot", "ℹ️ About"]
 )
 
 CRS_NAMES = list(CRS_OPTIONS.keys())
@@ -501,7 +501,7 @@ with tab_single:
 with tab_batch:
     st.subheader("Batch Conversion")
     st.markdown(
-        "Upload a CSV with columns for coordinates. "
+        "Upload a **CSV or Excel** file (.csv, .xlsx, .xls) with coordinate columns. "
         "You can include an **ID** column (optional) plus "
         "**Easting/Longitude/X** and **Northing/Latitude/Y**."
     )
@@ -524,17 +524,26 @@ with tab_batch:
                     "Target UTM Zone", 1, 60, 30, key="btgt_zone"
                 )
 
-    uploaded = st.file_uploader("Upload CSV", type=["csv"], key="csv_upload")
+    uploaded = st.file_uploader(
+        "Upload CSV or Excel file",
+        type=["csv", "xlsx", "xls"],
+        key="csv_upload",
+        help="Accepted formats: .csv, .xlsx, .xls",
+    )
 
     if uploaded is not None:
         try:
-            df = pd.read_csv(uploaded)
+            _fname = uploaded.name.lower()
+            if _fname.endswith(".xlsx") or _fname.endswith(".xls"):
+                df = pd.read_excel(uploaded)
+            else:
+                df = pd.read_csv(uploaded)
             st.markdown(f"**{len(df)} rows** loaded. Preview:")
             st.dataframe(df.head(10), use_container_width=True)
 
             col_names = df.columns.tolist()
             if len(col_names) < 2:
-                st.error("CSV must have at least 2 columns.")
+                st.error("File must have at least 2 columns.")
             else:
                 # Column mapping
                 st.markdown("##### Map Columns")
