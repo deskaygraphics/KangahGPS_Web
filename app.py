@@ -641,6 +641,11 @@ with tab_batch:
                         "is_latlon": btgt_info["is_latlon"],
                         "count": len(results),
                         "has_id": id_col != "— None —",
+                        "ids": (
+                            [str(v) for v in df[id_col].values]
+                            if id_col != "— None —"
+                            else None
+                        ),
                     }
 
         except Exception as e:
@@ -658,15 +663,30 @@ with tab_batch:
             lats = [r[0] for r in br["results"]]
             lons = [r[1] for r in br["results"]]
             batch_map = _make_map([sum(lats) / len(lats), sum(lons) / len(lons)], 7)
-            ids = br["out_df"]["ID"].values if br["has_id"] else None
+            ids = br["ids"] if br["has_id"] else None
             for i, (lat, lon) in enumerate(zip(lats, lons)):
-                label = f"ID: {ids[i]}" if ids is not None else f"Point {i+1}"
+                _bid = ids[i] if ids is not None else None
+                label = f"{_bid}" if _bid else f"Point {i+1}"
                 folium.Marker(
                     [lat, lon],
-                    popup=f"{label}<br>Lat: {lat:.6f}<br>Lon: {lon:.6f}",
+                    popup=f"<b>{label}</b><br>Lat: {lat:.6f}<br>Lon: {lon:.6f}",
                     tooltip=label,
                     icon=folium.Icon(color="red", icon="map-pin", prefix="fa"),
                 ).add_to(batch_map)
+                if _bid:
+                    folium.Marker(
+                        [lat, lon],
+                        icon=folium.DivIcon(
+                            html=(
+                                f'<div style="font-size:11px;font-weight:bold;color:#1a1a2e;'
+                                f"white-space:nowrap;text-shadow:1px 1px 2px white,"
+                                f'-1px -1px 2px white;margin-top:-38px;">'
+                                f"{_bid}</div>"
+                            ),
+                            icon_size=(140, 20),
+                            icon_anchor=(70, 20),
+                        ),
+                    ).add_to(batch_map)
             st_folium(batch_map, width=700, height=400, key="batch_map")
 
         # Export buttons
@@ -681,8 +701,12 @@ with tab_batch:
             ):
                 if "draw_points" not in st.session_state:
                     st.session_state.draw_points = []
-                for lat, lon in br["results"]:
-                    st.session_state.draw_points.append({"lat": lat, "lon": lon})
+                _b_ids = br.get("ids")
+                for _bi, (lat, lon) in enumerate(br["results"]):
+                    _blbl = _b_ids[_bi] if _b_ids else ""
+                    st.session_state.draw_points.append(
+                        {"lat": lat, "lon": lon, "label": _blbl}
+                    )
                 st.success(f"Sent {len(br['results'])} points to Draw & Plot tab!")
         else:
             csv_bytes = br["out_df"].to_csv(index=False).encode("utf-8")
@@ -721,6 +745,12 @@ with tab_draw:
         pt_v1 = st.number_input(df1, format=fmt, key="pt_v1")
         pt_v2 = st.number_input(df2, format=fmt, key="pt_v2")
 
+    pt_label = st.text_input(
+        "Label / ID (optional)",
+        key="pt_label",
+        placeholder="e.g. BM-001, TP-A, Corner 1",
+    )
+
     if st.button("➕ Add Point", key="add_pt"):
         # Convert to WGS84 for plotting
         if draw_src_info["is_latlon"]:
@@ -738,8 +768,13 @@ with tab_draw:
             )
         if "draw_points" not in st.session_state:
             st.session_state.draw_points = []
-        st.session_state.draw_points.append({"lat": lat, "lon": lon})
-        st.success(f"Added point: {lat:.6f}, {lon:.6f}")
+        st.session_state.draw_points.append(
+            {"lat": lat, "lon": lon, "label": pt_label.strip()}
+        )
+        st.success(
+            f"Added point: {lat:.6f}, {lon:.6f}"
+            + (f" [{pt_label.strip()}]" if pt_label.strip() else "")
+        )
 
     # Clear points
     c1, c2 = st.columns(2)
@@ -847,12 +882,29 @@ with tab_draw:
             color = "green"
         else:
             color = "red"
+        _pt_lbl = pt.get("label", "")
+        _pt_display = f"Point {i+1}" + (f" [{_pt_lbl}]" if _pt_lbl else "")
         folium.Marker(
             location=[pt["lat"], pt["lon"]],
-            popup=f"Point {i+1}<br>Lat: {pt['lat']:.6f}<br>Lon: {pt['lon']:.6f}",
-            tooltip=f"Point {i+1}",
+            popup=f"<b>{_pt_display}</b><br>Lat: {pt['lat']:.6f}<br>Lon: {pt['lon']:.6f}",
+            tooltip=_pt_display,
             icon=folium.Icon(color=color, icon="info-sign"),
         ).add_to(m)
+        # Permanent label above the marker
+        if _pt_lbl:
+            folium.Marker(
+                location=[pt["lat"], pt["lon"]],
+                icon=folium.DivIcon(
+                    html=(
+                        f'<div style="font-size:11px;font-weight:bold;color:#1a1a2e;'
+                        f"white-space:nowrap;text-shadow:1px 1px 2px white,"
+                        f'-1px -1px 2px white;margin-top:-38px;">'
+                        f"{_pt_lbl}</div>"
+                    ),
+                    icon_size=(140, 20),
+                    icon_anchor=(70, 20),
+                ),
+            ).add_to(m)
 
     # Draw connections with distance labels + polygon fill if closed
     _conns = st.session_state.get("connections", [])
@@ -1031,11 +1083,15 @@ with tab_draw:
         st.markdown("##### Points Table")
         for _pidx in range(len(points)):
             _pt = points[_pidx]
+            _pt_lbl = _pt.get("label", "")
             _pp1, _pp2, _pp3 = st.columns([1, 7, 1])
             with _pp1:
                 st.write(f"**{_pidx + 1}**")
             with _pp2:
-                st.write(f"Lat: {_pt['lat']:.6f}  |  Lon: {_pt['lon']:.6f}")
+                _lbl_suffix = f" · `{_pt_lbl}`" if _pt_lbl else ""
+                st.write(
+                    f"Lat: {_pt['lat']:.6f}  |  Lon: {_pt['lon']:.6f}{_lbl_suffix}"
+                )
             with _pp3:
                 if st.button("✕", key=f"del_pt_{_pidx}", help="Delete point"):
                     st.session_state.draw_points.pop(_pidx)
