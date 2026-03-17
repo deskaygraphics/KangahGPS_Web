@@ -673,20 +673,21 @@ with tab_batch:
                     tooltip=label,
                     icon=folium.Icon(color="red", icon="map-pin", prefix="fa"),
                 ).add_to(batch_map)
-                if _bid:
-                    folium.Marker(
-                        [lat, lon],
-                        icon=folium.DivIcon(
-                            html=(
-                                f'<div style="font-size:11px;font-weight:bold;color:#1a1a2e;'
-                                f"white-space:nowrap;text-shadow:1px 1px 2px white,"
-                                f'-1px -1px 2px white;margin-top:-38px;">'
-                                f"{_bid}</div>"
-                            ),
-                            icon_size=(140, 20),
-                            icon_anchor=(70, 20),
+                # Permanent label — always shown
+                _blbl_map = _bid if _bid else f"P{i + 1}"
+                folium.Marker(
+                    [lat, lon],
+                    icon=folium.DivIcon(
+                        html=(
+                            f'<div style="font-size:11px;font-weight:bold;color:#1a1a2e;'
+                            f"white-space:nowrap;text-shadow:1px 1px 2px white,"
+                            f'-1px -1px 2px white;margin-top:-38px;">'
+                            f"{_blbl_map}</div>"
                         ),
-                    ).add_to(batch_map)
+                        icon_size=(140, 20),
+                        icon_anchor=(70, 20),
+                    ),
+                ).add_to(batch_map)
             st_folium(batch_map, width=700, height=400, key="batch_map")
 
         # Export buttons
